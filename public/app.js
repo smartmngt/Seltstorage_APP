@@ -4,6 +4,7 @@ let myRole = null;
 async function checkLogin() {
   try {
     const r = await fetch(API + '/api/me', { credentials: 'include' }).then(r => r.json());
+    document.getElementById('loading-view').style.display = 'none';
     if (r.loggedIn) {
       myRole = r.role;
       document.getElementById('login-view').style.display = 'none';
@@ -19,6 +20,7 @@ async function checkLogin() {
       document.getElementById('main-view').style.display = 'none';
     }
   } catch (e) {
+    document.getElementById('loading-view').style.display = 'none';
     document.getElementById('login-view').style.display = 'block';
     document.getElementById('login-err').textContent = '서버 연결 오류: ' + e.message;
   }
