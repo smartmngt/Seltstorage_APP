@@ -146,9 +146,15 @@ app.get('/api/check-now', async (req, res) => {
 });
 
 // 10분마다 내부적으로도 한번씩 시도 (서버가 깨어있는 동안 보조 수단)
-cron.schedule('*/10 * * * *', () => {
-  checkNewSales().catch(e => console.error('[cron] 오류:', e.message));
-});
+// AUTO_CHECK_ENABLED=true 로 설정해야 켜짐 (기본은 꺼짐 - IP 차단 방지)
+if (process.env.AUTO_CHECK_ENABLED === 'true') {
+  cron.schedule('*/10 * * * *', () => {
+    checkNewSales().catch(e => console.error('[cron] 오류:', e.message));
+  });
+  console.log('[cron] 자동 체크 활성화됨 (10분마다)');
+} else {
+  console.log('[cron] 자동 체크 비활성화 상태 (AUTO_CHECK_ENABLED=true로 설정하면 켜짐)');
+}
 
 // ═══════════════════════════════════════════════════
 // 창고 앱 데이터 (회원/계약/고정비/변동비) - 모두가 같은 데이터를 봄
