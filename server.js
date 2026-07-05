@@ -151,6 +151,28 @@ cron.schedule('*/10 * * * *', () => {
 });
 
 // ═══════════════════════════════════════════════════
+// 창고 앱 데이터 (회원/계약/고정비/변동비) - 모두가 같은 데이터를 봄
+// 게스트(role=user)는 조회만, 관리자만 저장 가능
+// ═══════════════════════════════════════════════════
+const APPDATA_DEFAULT = { members: [], contracts: [], fixedCosts: [], variableCosts: [] };
+
+app.get('/api/appdata', requireAuth, (req, res) => {
+  res.json(readJSON('appdata.json', APPDATA_DEFAULT));
+});
+
+app.post('/api/appdata', requireAuth, requireAdmin, (req, res) => {
+  const body = req.body || {};
+  const data = {
+    members: Array.isArray(body.members) ? body.members : [],
+    contracts: Array.isArray(body.contracts) ? body.contracts : [],
+    fixedCosts: Array.isArray(body.fixedCosts) ? body.fixedCosts : [],
+    variableCosts: Array.isArray(body.variableCosts) ? body.variableCosts : [],
+  };
+  writeJSON('appdata.json', data);
+  res.json({ ok: true, savedAt: new Date().toISOString() });
+});
+
+// ═══════════════════════════════════════════════════
 // 대기열 승인/거부 (승인 화면 전용, 로그인 필요)
 // ═══════════════════════════════════════════════════
 app.get('/api/pending', requireAuth, (req, res) => {
