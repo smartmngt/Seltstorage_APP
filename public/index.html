@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>매출 승인 - 열려라창고 반포점</title>
+<style>
+  * { box-sizing: border-box; margin:0; padding:0; }
+  body { font-family: -apple-system, 'Noto Sans KR', sans-serif; background:#F1F5F9; color:#0F172A; }
+  .hd { background:linear-gradient(150deg,#1E293B,#0F172A); color:#fff; padding:30px 20px 24px; }
+  .hd-sub { font-size:12px; color:#94A3B8; letter-spacing:1px; }
+  .hd-title { font-size:22px; font-weight:800; margin-top:4px; }
+  .wrap { padding:16px; max-width:480px; margin:0 auto; }
+  .card { background:#fff; border-radius:14px; padding:16px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  input[type=password] { width:100%; padding:14px; border-radius:10px; border:1.5px solid #E2E8F0; font-size:15px; margin-bottom:10px; }
+  button { border:none; border-radius:10px; padding:13px 16px; font-weight:700; font-size:14px; cursor:pointer; width:100%; }
+  .btn-primary { background:#0F172A; color:#fff; }
+  .btn-green { background:#10B981; color:#fff; }
+  .btn-red { background:#FEF2F2; color:#EF4444; }
+  .btn-gray { background:#F1F5F9; color:#334155; }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+  .name { font-size:16px; font-weight:800; }
+  .meta { font-size:13px; color:#64748B; margin-top:4px; }
+  .amt { font-size:18px; font-weight:800; color:#0F172A; margin-top:8px; }
+  .empty { text-align:center; color:#94A3B8; padding:60px 20px; font-size:14px; }
+  #login-view, #main-view { display:none; }
+</style>
+</head>
+<body>
+  <div class="hd">
+    <div class="hd-sub">열 려 라 창 고 · 반 포 점</div>
+    <div class="hd-title">매출 승인</div>
+  </div>
+  <div class="wrap">
+
+    <div id="loading-view" style="text-align:center;padding:60px 20px;color:#94A3B8;font-size:14px;">
+      서버 연결 중이에요... (최대 1분 정도 걸릴 수 있어요)
+    </div>
+
+    <div id="login-view">
+      <div class="card">
+        <div style="font-weight:700;margin-bottom:12px;">로그인</div>
+        <input type="text" id="username" placeholder="아이디" style="width:100%;padding:14px;border-radius:10px;border:1.5px solid #E2E8F0;font-size:15px;margin-bottom:10px;">
+        <input type="password" id="pw" placeholder="비밀번호">
+        <button class="btn-primary" onclick="doLogin()">입장하기</button>
+        <div id="login-err" style="color:#EF4444;font-size:13px;margin-top:8px;"></div>
+      </div>
+    </div>
+
+    <div id="main-view">
+      <div class="card" style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:13px;color:#64748B;" id="whoami"></div>
+        <div style="display:flex;gap:6px;">
+          <button id="push-btn" style="width:auto;padding:8px 12px;font-size:12px;display:none;" class="btn-gray" onclick="enablePush()">🔔 알림 켜기</button>
+          <button style="width:auto;padding:8px 12px;font-size:12px;" class="btn-gray" onclick="doLogout()">로그아웃</button>
+        </div>
+      </div>
+      <div id="list"></div>
+
+      <div id="admin-panel" style="display:none;margin-top:24px;">
+        <div class="card">
+          <div style="font-weight:800;margin-bottom:10px;">👥 직원 계정 관리 (관리자 전용)</div>
+          <input type="text" id="new-username" placeholder="새 아이디" style="width:100%;padding:12px;border-radius:10px;border:1.5px solid #E2E8F0;font-size:14px;margin-bottom:8px;">
+          <input type="password" id="new-password" placeholder="새 비밀번호" style="width:100%;padding:12px;border-radius:10px;border:1.5px solid #E2E8F0;font-size:14px;margin-bottom:8px;">
+          <button class="btn-primary" onclick="createUser()">계정 추가</button>
+          <div id="user-list" style="margin-top:14px;"></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script src="app.js"></script>
+</body>
+</html>
