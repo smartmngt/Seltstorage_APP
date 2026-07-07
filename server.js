@@ -10,6 +10,9 @@ const path = require('path');
 const { readJSON, writeJSON } = require('./db');
 const { runScrape } = require('./scraper');
 const users = require('./users');
+const auth = require('./auth');
+const webauthnStore = require('./webauthnStore');
+const webauthn = require('@simplewebauthn/server');
 
 const app = express();
 // Render/Cloud Run 등 프록시 뒤에서 실행되므로, https 여부를 프록시 헤더로 신뢰하도록 설정
@@ -45,13 +48,24 @@ app.use(session({
   cookie: { maxAge: 30 * 24 * 60 * 60 * 1000, sameSite: 'none', secure: true },
 }));
 
+function getAuthUser(req) {
+  if (req.session && req.session.username) {
+    return { username: req.session.username, role: req.session.role };
+  }
+  const token = req.headers['x-auth-token'];
+  const payload = auth.verify(token, SESSION_SECRET || 'change-me-please');
+  if (payload && payload.username) return { username: payload.username, role: payload.role };
+  return null;
+}
 function requireAuth(req, res, next) {
-  if (req.session && req.session.username) return next();
-  return res.status(401).json({ error: '로그인이 필요해요' });
+  const u = getAuthUser(req);
+  if (!u) return res.status(401).json({ error: '로그인이 필요해요' });
+  req.authUser = u;
+  next();
 }
 function requireAdmin(req, res, next) {
-  if (req.session && req.session.role === 'admin') return next();
-  return res.status(403).json({ error: '관리자만 할 수 있어요' });
+  if (!req.authUser || req.authUser.role !== 'admin') return res.status(403).json({ error: '관리자만 할 수 있어요' });
+  next();
 }
 
 // ═══════════════════════════════════════════════════
@@ -65,14 +79,19 @@ app.post('/api/login', (req, res) => {
   }
   req.session.username = user.username;
   req.session.role = user.role;
-  res.json({ ok: true, username: user.username, role: user.role });
+  const token = auth.makeToken(user, SESSION_SECRET || 'change-me-please');
+  res.json({ ok: true, username: user.username, role: user.role, token, hasBiometric: webauthnStore.hasAnyCreds(user.username) });
 });
 app.post('/api/logout', (req, res) => { req.session.destroy(() => res.json({ ok: true })); });
 app.get('/api/me', (req, res) => {
-  if (req.session && req.session.username) {
-    return res.json({ loggedIn: true, username: req.session.username, role: req.session.role });
-  }
+  const u = getAuthUser(req);
+  if (u) return res.json({ loggedIn: true, username: u.username, role: u.role });
   res.json({ loggedIn: false });
+});
+// 아이디만으로 "이 계정에 등록된 생체인증이 있는지" 확인 (로그인 전, 버튼 표시용)
+app.get('/api/has-biometric', (req, res) => {
+  const username = req.query.username || '';
+  res.json({ hasBiometric: webauthnStore.hasAnyCreds(username) });
 });
 
 // ═══════════════════════════════════════════════════
@@ -92,11 +111,120 @@ app.post('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
   }
 });
 app.delete('/api/admin/users/:username', requireAuth, requireAdmin, (req, res) => {
-  if (req.params.username === req.session.username) {
+  if (req.params.username === req.authUser.username) {
     return res.status(400).json({ error: '자기 자신은 삭제할 수 없어요' });
   }
   users.deleteUser(req.params.username);
   res.json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════
+// 생체인증 (WebAuthn) - 지문/얼굴 인식으로 로그인
+// ═══════════════════════════════════════════════════
+const pendingChallenges = {}; // 짧게 쓰고 버리는 값이라 메모리 저장으로 충분함
+
+function rpID(req) { return req.hostname; }
+function origin(req) { return `https://${req.hostname}`; }
+
+app.post('/api/webauthn/register-options', requireAuth, async (req, res) => {
+  try {
+    const username = req.authUser.username;
+    const existing = webauthnStore.getCreds(username);
+    const options = await webauthn.generateRegistrationOptions({
+      rpName: '열려라창고 반포점',
+      rpID: rpID(req),
+      userName: username,
+      attestationType: 'none',
+      excludeCredentials: existing.map(c => ({ id: c.credentialID, type: 'public-key' })),
+      authenticatorSelection: { residentKey: 'preferred', userVerification: 'preferred' },
+    });
+    pendingChallenges['reg:' + username] = options.challenge;
+    res.json(options);
+  } catch (e) {
+    console.error('[webauthn] register-options 오류:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/webauthn/register-verify', requireAuth, async (req, res) => {
+  try {
+    const username = req.authUser.username;
+    const expectedChallenge = pendingChallenges['reg:' + username];
+    const verification = await webauthn.verifyRegistrationResponse({
+      response: req.body,
+      expectedChallenge,
+      expectedOrigin: origin(req),
+      expectedRPID: rpID(req),
+    });
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ error: '생체인증 등록 검증에 실패했어요' });
+    }
+    const { credential } = verification.registrationInfo;
+    webauthnStore.saveCred(username, {
+      credentialID: credential.id,
+      credentialPublicKey: Buffer.from(credential.publicKey).toString('base64url'),
+      counter: credential.counter,
+    });
+    delete pendingChallenges['reg:' + username];
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[webauthn] register-verify 오류:', e);
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/webauthn/auth-options', async (req, res) => {
+  try {
+    const { username } = req.body || {};
+    const creds = webauthnStore.getCreds(username || '');
+    if (!creds.length) return res.status(404).json({ error: '등록된 생체인증이 없어요' });
+    const options = await webauthn.generateAuthenticationOptions({
+      rpID: rpID(req),
+      allowCredentials: creds.map(c => ({ id: c.credentialID, type: 'public-key' })),
+      userVerification: 'preferred',
+    });
+    pendingChallenges['auth:' + username] = options.challenge;
+    res.json(options);
+  } catch (e) {
+    console.error('[webauthn] auth-options 오류:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/webauthn/auth-verify', async (req, res) => {
+  try {
+    const { username, response } = req.body || {};
+    const expectedChallenge = pendingChallenges['auth:' + username];
+    const creds = webauthnStore.getCreds(username || '');
+    const cred = creds.find(c => c.credentialID === response.id);
+    if (!cred) return res.status(400).json({ error: '등록된 인증 정보를 찾을 수 없어요' });
+
+    const verification = await webauthn.verifyAuthenticationResponse({
+      response,
+      expectedChallenge,
+      expectedOrigin: origin(req),
+      expectedRPID: rpID(req),
+      credential: {
+        id: cred.credentialID,
+        publicKey: Buffer.from(cred.credentialPublicKey, 'base64url'),
+        counter: cred.counter,
+      },
+    });
+    if (!verification.verified) return res.status(400).json({ error: '생체인증에 실패했어요' });
+
+    webauthnStore.updateCounter(username, cred.credentialID, verification.authenticationInfo.newCounter);
+    delete pendingChallenges['auth:' + username];
+
+    const user = users.findUser(username);
+    if (!user) return res.status(400).json({ error: '계정을 찾을 수 없어요' });
+    req.session.username = user.username;
+    req.session.role = user.role;
+    const token = auth.makeToken(user, SESSION_SECRET || 'change-me-please');
+    res.json({ ok: true, username: user.username, role: user.role, token });
+  } catch (e) {
+    console.error('[webauthn] auth-verify 오류:', e);
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // ═══════════════════════════════════════════════════
@@ -238,7 +366,7 @@ app.post('/api/push-subscribe', requireAuth, requireAdmin, (req, res) => {
   if (!sub || !sub.endpoint) return res.status(400).json({ error: '구독 정보가 올바르지 않아요' });
   const subs = readJSON('subscriptions.json', []);
   if (!subs.some(s => s.endpoint === sub.endpoint)) {
-    subs.push({ ...sub, username: req.session.username });
+    subs.push({ ...sub, username: req.authUser.username });
     writeJSON('subscriptions.json', subs);
   }
   res.json({ ok: true });
