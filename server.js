@@ -12,6 +12,9 @@ const { runScrape } = require('./scraper');
 const users = require('./users');
 
 const app = express();
+// Render/Cloud Run 등 프록시 뒤에서 실행되므로, https 여부를 프록시 헤더로 신뢰하도록 설정
+// (이게 없으면 secure 쿠키(로그인 세션)가 저장되지 않음)
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use(cors({ origin: true, credentials: true }));
 
